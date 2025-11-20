@@ -2,8 +2,12 @@ from fastapi import FastAPI, WebSocket
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi import Request
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
+
+control_clients = set()  
+pi_clients = set()  
 
 # Serve frontend static files
 app.mount("/static", StaticFiles(directory="frontend"), name="static")
@@ -31,9 +35,9 @@ async def websocket_viewer(websocket: WebSocket):
     try:
         while True:
             await websocket.receive_text()  # viewers send nothing
-    except:
+    except Exception as e:
         viewers.remove(websocket)
-        print("Viewer disconnected")
+        print("Viewer disconnected:", e)
 
 # WebSocket for Raspberry Pi to upload frames
 @app.websocket("/upload")
@@ -65,3 +69,30 @@ async def control_car(request: Request):
     print(f"Command received: {cmd}")
     # Here you can forward cmd to ROS2, or handle accordingly
     return {"status": "ok", "cmd": cmd}
+
+@app.websocket("/control-ws")
+async def control_ws(websocket: WebSocket):
+    await websocket.accept()
+    control_clients.add(websocket)
+    try:
+        while True:
+            msg = await websocket.receive_text()
+            # Forward to Pi(s)
+            for p in pi_clients.copy():
+                try:
+                    await p.send_text(msg)
+                except:
+                    pi_clients.remove(p)
+    except:
+        control_clients.remove(websocket)
+        
+@app.websocket("/pi-control")
+async def pi_control_ws(websocket: WebSocket):
+    await websocket.accept()
+    pi_clients.add(websocket)
+    try:
+        while True:
+            await websocket.receive_text()  
+    except:
+        pi_clients.remove(websocket)
+
